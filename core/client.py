@@ -212,11 +212,15 @@ class KalshiClient:
             "type":       order_type,
             "client_order_id": client_order_id or str(uuid.uuid4()),
         }
-        # Round to 2dp; Kalshi rejects more precision than the tick allows
+        # Kalshi expects the price field as a STRING decimal — the Go server
+        # rejects a JSON number with: "cannot unmarshal number into Go struct
+        # field CreateOrderRequest.yes_price_dollars of type string".
+        # 4-decimal form covers both 1¢ and 0.1¢ (deci_cent) tick markets.
+        price_str = f"{round(price, 4):.4f}"
         if side == "yes":
-            body["yes_price_dollars"] = round(price, 2)
+            body["yes_price_dollars"] = price_str
         else:
-            body["no_price_dollars"]  = round(price, 2)
+            body["no_price_dollars"]  = price_str
 
         log_msg = (f"ORDER {action.upper()} {side.upper()} {count}c "
                    f"@ ${price:.2f} ticker={ticker}")
