@@ -1,26 +1,25 @@
-"""Unit tests for the market scanner (no auth, no Polymarket account needed)."""
-import sys
+"""Unit tests for the market scanner (no Kalshi credentials needed)."""
 import os
+import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from research.scanner import _score_market, MarketScanner
-from core.gamma import get_market_summary
 
 
 def _make_market(yes_price=0.5, volume=10000, liquidity=1000, spread=0.02):
     return {
-        "slug": "test-market",
-        "question": "Test?",
-        "yes_price": yes_price,
-        "no_price": 1 - yes_price - spread,
-        "spread": spread,
-        "volume": volume,
-        "liquidity": liquidity,
-        "active": True,
-        "closed": False,
-        "condition_id": "0xabc",
-        "token_ids": None,
-        "end_date": None,
+        "ticker":       "TEST-MARKET",
+        "event_ticker": "TEST-EVENT",
+        "question":     "Test?",
+        "yes_price":    yes_price,
+        "no_price":     1 - yes_price,
+        "spread":       spread,
+        "volume":       volume,
+        "liquidity":    liquidity,
+        "active":       True,
+        "closed":       False,
+        "status":       "active",
+        "close_time":   None,
     }
 
 
@@ -37,28 +36,24 @@ def test_low_volume_low_score():
 
 
 def test_extreme_price_penalised():
-    m = _make_market(yes_price=0.99, volume=100000, liquidity=5000, spread=0.01)
-    score = _score_market(m)
-    # Price near 1.0 → almost no uncertainty, low score from price component
-    mid_m = _make_market(yes_price=0.5, volume=100000, liquidity=5000, spread=0.01)
-    mid_score = _score_market(mid_m)
-    assert score < mid_score, "Mid-price market should outscore extreme-price market"
+    extreme  = _make_market(yes_price=0.99, volume=100000,
+                             liquidity=5000, spread=0.01)
+    mid      = _make_market(yes_price=0.50, volume=100000,
+                             liquidity=5000, spread=0.01)
+    assert _score_market(extreme) < _score_market(mid)
 
 
 def test_wide_spread_penalised():
-    tight = _make_market(yes_price=0.5, volume=10000, liquidity=1000, spread=0.01)
-    wide  = _make_market(yes_price=0.5, volume=10000, liquidity=1000, spread=0.10)
+    tight = _make_market(yes_price=0.5, spread=0.01)
+    wide  = _make_market(yes_price=0.5, spread=0.10)
     assert _score_market(tight) > _score_market(wide)
 
 
-def test_scanner_filters_closed():
+def test_scanner_get_by_ticker():
     scanner = MarketScanner()
     scanner.results = [
-        _make_market() | {"slug": "open",   "closed": False, "score": 80},
-        _make_market() | {"slug": "closed", "closed": True,  "score": 80},
+        _make_market() | {"ticker": "AAA", "score": 80},
+        _make_market() | {"ticker": "BBB", "score": 60},
     ]
-    top = scanner.top(10)
-    slugs = [m["slug"] for m in top]
-    # scanner.top() returns whatever is in results — closed filtering
-    # happens in scan(), not top(); just verify top() returns them in order
-    assert top[0]["score"] >= top[-1]["score"] if len(top) > 1 else True
+    assert scanner.get("AAA")["score"] == 80
+    assert scanner.get("ZZZ") is None

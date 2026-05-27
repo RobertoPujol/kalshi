@@ -1,13 +1,13 @@
 # Core
-py-clob-client>=0.17.0
-web3>=6.0.0
-eth-account>=0.10.0
+cryptography>=42.0.0
+requests>=2.31.0
 websockets>=12.0
 
-# API / scheduling
-requests>=2.31.0
+# Scheduling / config
 apscheduler>=3.10.0
 python-dotenv>=1.0.0
+
+# Optional API surface (kept for future dashboard work)
 fastapi>=0.110.0
 uvicorn>=0.27.0
 
