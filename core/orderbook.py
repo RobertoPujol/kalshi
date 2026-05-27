@@ -50,35 +50,58 @@ def _empty_book() -> dict:
     return {"yes_bids": {}, "no_bids": {}, "ts": time.time()}
 
 
+def _to_float(v) -> float:
+    try:
+        return float(v) if v not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _apply_snapshot(ticker: str, msg: dict):
-    """Replace the book with a fresh snapshot."""
+    """Replace the book with a fresh snapshot.
+
+    Wire format (current Kalshi):
+        yes_dollars_fp: [["0.0400", "5020.00"], ...]   price_str, size_str
+        no_dollars_fp:  [["0.5500", "12.00"], ...]
+    Prices are already in dollars; sizes are float strings.
+    """
     with _lock:
         book = _empty_book()
-        for price_cents, size in (msg.get("yes") or []):
-            book["yes_bids"][price_cents / 100.0] = size
-        for price_cents, size in (msg.get("no") or []):
-            book["no_bids"][price_cents / 100.0] = size
+        for entry in (msg.get("yes_dollars_fp") or msg.get("yes") or []):
+            price_d, size = _to_float(entry[0]), _to_float(entry[1])
+            if size > 0:
+                book["yes_bids"][round(price_d, 4)] = size
+        for entry in (msg.get("no_dollars_fp") or msg.get("no") or []):
+            price_d, size = _to_float(entry[0]), _to_float(entry[1])
+            if size > 0:
+                book["no_bids"][round(price_d, 4)] = size
         _books[ticker] = book
 
 
 def _apply_delta(ticker: str, msg: dict):
-    """Apply a single price-level delta. size=0 removes the level."""
+    """Apply a single price-level delta.
+
+    Wire format (current Kalshi):
+        side: "yes" | "no"
+        price_dollars: "0.3400"
+        delta_fp: "-1470.00"           change in resting contracts
+    A resulting size of <= 0 removes the level.
+    """
     with _lock:
         book = _books.get(ticker)
         if not book:
             # Delta arrived before snapshot — initialise empty and fill in.
             book = _empty_book()
             _books[ticker] = book
-        side = msg.get("side", "").lower()        # "yes" or "no"
-        price = msg.get("price")
-        size  = msg.get("delta", 0)               # absolute new size, or delta?
-        # Kalshi delta: "delta" is the change in resting contracts.
+        side  = (msg.get("side") or "").lower()
+        price = msg.get("price_dollars") or msg.get("price")
+        delta = _to_float(msg.get("delta_fp") or msg.get("delta"))
         if price is None or side not in ("yes", "no"):
             return
-        price_d = float(price) / 100.0
+        price_d = round(_to_float(price), 4)
         bucket = "yes_bids" if side == "yes" else "no_bids"
         current = book[bucket].get(price_d, 0)
-        new = current + size
+        new = current + delta
         if new <= 0:
             book[bucket].pop(price_d, None)
         else:
