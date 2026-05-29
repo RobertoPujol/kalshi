@@ -198,6 +198,7 @@ class OrderBookManager:
 
     def __init__(self):
         self._tickers: list[str] = []
+        self._subscribed: set[str] = set()
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -210,8 +211,14 @@ class OrderBookManager:
         if not self._tickers:
             logger.warning("OrderBookManager.start() called with no tickers")
             return
-        if self._thread and self._thread.is_alive():
-            return
+        current = set(self._tickers)
+        if self._thread and self._thread.is_alive() and current == self._subscribed:
+            return  # nothing changed, keep running
+        # Stop existing thread so we can restart with the full ticker set
+        if self._thread and self._thread.is_alive() and self._loop:
+            self._loop.call_soon_threadsafe(self._loop.stop)
+            self._thread.join(timeout=5)
+        self._subscribed = current.copy()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="orderbook-ws"

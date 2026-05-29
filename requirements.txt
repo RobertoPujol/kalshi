@@ -21,5 +21,9 @@ sqlalchemy>=2.0.0
 # Logging
 loguru>=0.7.0
 
+# ML
+scikit-learn>=1.4.0
+numpy>=1.26.0
+
 # Dev / test
 pytest>=7.4.0

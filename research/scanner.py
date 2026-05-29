@@ -13,11 +13,11 @@ import os
 import time
 from typing import Optional
 
+from core.adaptive_params import scanner_min_score, blacklisted_series
 from core.markets import get_active_markets, get_market_summary
 from core.risk import risk
 from utils.logger import logger
 
-MIN_SCORE  = float(os.getenv("SCANNER_MIN_SCORE", "30"))
 PRICE_LOW  = float(os.getenv("SCANNER_PRICE_LOW",  "0.05"))
 PRICE_HIGH = float(os.getenv("SCANNER_PRICE_HIGH", "0.95"))
 
@@ -38,10 +38,10 @@ def _score_market(m: dict) -> float:
     if vol > 0:
         score += min(30, math.log10(max(1, vol)) * 10)
 
-    # Liquidity component (0–20)
+    # Liquidity component (0–20): scaled for Kalshi's thinner markets
     liq = m.get("liquidity", 0)
     if liq >= risk.min_liquidity:
-        score += min(20, liq / 500)
+        score += min(20, liq / 50)
 
     # Spread component (0–20): tighter is better
     if sp is not None:
@@ -49,6 +49,7 @@ def _score_market(m: dict) -> float:
         elif sp <= 0.02: score += 15
         elif sp <= 0.04: score += 10
         elif sp <= 0.06: score += 5
+        elif sp <= 0.10: score += 2
 
     # Price away from extremes (0–30): max at 0.50
     yes = m.get("yes_price")
@@ -65,23 +66,33 @@ class MarketScanner:
         self._last_scan: float = 0
 
     def scan(self, limit: int = 200,
-             min_score: float = MIN_SCORE) -> list[dict]:
+             min_score: float | None = None) -> list[dict]:
         """Fetch open Kalshi markets, score and filter them.
 
         Returns list of market summaries sorted by score desc.
+        min_score defaults to the adaptive value (falls back to env/default).
         """
-        logger.info("Market scan starting...")
+        effective_min = min_score if min_score is not None else scanner_min_score()
+        blocked = blacklisted_series()
+        logger.info(f"Market scan starting (min_score={effective_min}, blacklisted={blocked or 'none'})...")
         try:
             raw = get_active_markets(limit=limit)
         except Exception as e:
             logger.error(f"Kalshi /markets fetch failed: {e}")
             return self.results
 
+        import re
+        def _series(ticker: str) -> str:
+            m = re.match(r"^([A-Z]+)", ticker or "")
+            return m.group(1) if m else ""
+
         scored = []
         for m in raw:
             summary = get_market_summary(m)
+            if _series(summary.get("ticker", "")) in blocked:
+                continue
             summary["score"] = _score_market(summary)
-            if summary["score"] >= min_score and not summary.get("closed"):
+            if summary["score"] >= effective_min and not summary.get("closed"):
                 scored.append(summary)
 
         scored.sort(key=lambda x: x["score"], reverse=True)

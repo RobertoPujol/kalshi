@@ -24,7 +24,7 @@ MAX_TOTAL_EXPOSURE   = float(os.getenv("MAX_TOTAL_EXPOSURE",   "100"))
 MAX_POSITIONS        = int(  os.getenv("MAX_POSITIONS",        "8"))
 MIN_ORDER_CONTRACTS  = int(  os.getenv("MIN_ORDER_CONTRACTS",  "2"))
 MAX_SPREAD_ENTRY     = float(os.getenv("MAX_SPREAD_ENTRY",     "0.06"))
-MIN_LIQUIDITY        = float(os.getenv("MIN_LIQUIDITY",        "500"))
+MIN_LIQUIDITY        = float(os.getenv("MIN_LIQUIDITY",        "10"))
 
 
 def _position_exposure_usd(p: dict) -> float:

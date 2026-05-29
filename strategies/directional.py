@@ -16,14 +16,11 @@ Env knobs:
 import os
 from typing import Optional, Protocol
 
+from core.adaptive_params import dir_min_deviation, dir_take_profit, dir_stop_loss
 from core.client import kalshi_client
 from core.orderbook import order_book_manager
 from core.risk import risk
 from utils.logger import logger
-
-MIN_DEVIATION = float(os.getenv("DIR_MIN_DEVIATION", "0.05"))
-TAKE_PROFIT   = float(os.getenv("DIR_TAKE_PROFIT",   "0.04"))
-STOP_LOSS     = float(os.getenv("DIR_STOP_LOSS",     "0.03"))
 
 
 class FairValueProvider(Protocol):
@@ -71,9 +68,9 @@ class DirectionalTrader:
             # for a NO long, current "value" = 1 - yes_mid.
             current_value = mid if side == "yes" else (1.0 - mid)
             pnl_per = current_value - entry
-            if pnl_per >= TAKE_PROFIT:
+            if pnl_per >= dir_take_profit():
                 return self._close("take_profit", mid)
-            if pnl_per <= -STOP_LOSS:
+            if pnl_per <= -dir_stop_loss():
                 return self._close("stop_loss", mid)
             return {"action": "hold", "side": side, "pnl_per": round(pnl_per, 4)}
 
@@ -83,7 +80,7 @@ class DirectionalTrader:
             return {"action": "skip", "reason": "no_fair_value"}
 
         deviation = fv - mid       # positive → market underpricing YES
-        if abs(deviation) < MIN_DEVIATION:
+        if abs(deviation) < dir_min_deviation():
             return {"action": "watch", "mid": mid, "fv": fv,
                     "deviation": round(deviation, 4)}
 
@@ -118,6 +115,11 @@ class DirectionalTrader:
             return {"action": "entry", "side": side, "price": entry_price,
                     "count": count, "deviation": deviation}
         return {"action": "skip", "reason": "order_failed"}
+
+    def cancel_all(self):
+        kalshi_client.cancel_all_for_ticker(self.ticker)
+        self._position = None
+        logger.info(f"Directional cancelled all for {self.ticker}")
 
     def _close(self, reason: str, current_yes_mid: float) -> dict:
         if not self._position:
