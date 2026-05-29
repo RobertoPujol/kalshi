@@ -37,6 +37,7 @@ from core.client import kalshi_client, DRY_RUN
 from core.risk import risk
 from core.dashboard_sync import sync_trades
 from core.fair_value_model import fair_value_model
+from core.sentiment_fair_value import SentimentFairValueProvider
 from research.scanner import scanner
 from research.strategy_discovery import run_discovery
 from strategies.market_maker import MarketMaker
@@ -45,6 +46,8 @@ from strategies.mean_reversion import MeanReversionTrader
 
 os.makedirs("logs", exist_ok=True)
 init_db()
+
+sentiment_fv = SentimentFairValueProvider(base_provider=fair_value_model)
 
 # ── Active traders: ticker → instance ────────────────────────────────────────
 _market_makers:        dict[str, MarketMaker]         = {}
@@ -126,7 +129,7 @@ def job_market_scan():
             if (_strategy_enabled(config, "directional")
                     and ticker not in _directional_traders):
                 _directional_traders[ticker] = DirectionalTrader(
-                    ticker=ticker, fair_value_provider=fair_value_model,
+                    ticker=ticker, fair_value_provider=sentiment_fv,
                 )
                 logger.info(f"Added DirectionalTrader for {ticker}")
 

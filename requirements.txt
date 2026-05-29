@@ -25,5 +25,8 @@ loguru>=0.7.0
 scikit-learn>=1.4.0
 numpy>=1.26.0
 
+# Sentiment
+nltk>=3.8.0
+
 # Dev / test
 pytest>=7.4.0

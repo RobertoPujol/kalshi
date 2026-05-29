@@ -98,6 +98,8 @@ if [[ "$KALSHI_ENV" != "prod" && "$KALSHI_ENV" != "demo" ]]; then
     KALSHI_ENV="prod"
 fi
 
+ask NEWS_API_KEY "NewsAPI.org key (optional — leave blank to use free GDELT)" ""
+
 ask DRY_RUN "Dry-run mode? (true|false)" "true"
 if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" ]]; then
     DRY_RUN="true"
@@ -110,6 +112,7 @@ echo "  KALSHI_API_KEY_ID       = $KALSHI_API_KEY_ID"
 echo "  KALSHI_PRIVATE_KEY_PATH = $KEY_PATH"
 echo "  KALSHI_ENV              = $KALSHI_ENV"
 echo "  DRY_RUN                 = $DRY_RUN"
+echo "  NEWS_API_KEY            = ${NEWS_API_KEY:-(not set — will use GDELT)}"
 echo
 if [[ "$KALSHI_ENV" == "prod" && "$DRY_RUN" == "false" ]]; then
     echo "  $(red "⚠  LIVE mode against PROD — real orders will be submitted")"
@@ -135,6 +138,9 @@ KALSHI_ENV=$KALSHI_ENV
 
 # ── Safety ────────────────────────────────────────────────────────────────────
 DRY_RUN=$DRY_RUN
+
+# ── Sentiment / news ──────────────────────────────────────────────────────────
+NEWS_API_KEY=$NEWS_API_KEY
 
 EOF
     if [[ -f "$EXAMPLE_FILE" ]]; then
