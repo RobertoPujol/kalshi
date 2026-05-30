@@ -80,6 +80,12 @@ class MarketMaker:
     def update(self, balance: float, open_positions: list[dict],
                market_summary: dict) -> dict:
         """Called each trading cycle. Reprices or cancels/replaces quotes."""
+        # Bail immediately if market has already closed/settled — cancel any
+        # resting orders so we don't leave orphaned quotes.
+        if market_summary.get("closed"):
+            self.cancel_all()
+            return {"action": "skip", "reason": "market_closed"}
+
         ok, reason = risk.can_open(market_summary, open_positions, balance)
 
         if order_book_manager.is_stale(self.ticker):
@@ -116,22 +122,25 @@ class MarketMaker:
             actions.append(f"buy_unchanged@{bid_px:.2f}")
 
         # ── Sell side (YES SELL at ask) ──────────────────────────────────────
+        # IMPORTANT: both sides require ok=True. Without this gate, the bot
+        # would post naked YES short positions (long NO) even when the risk
+        # manager has blocked new exposure — the root cause of the $165 loss.
         if self._should_reprice(ask_px, self._sell_order):
             if self._sell_order:
                 kalshi_client.cancel_order(self._sell_order["order_id"])
                 self._sell_order = None
-            # Always post a sell — closes long YES inventory if filled.
-            result = kalshi_client.create_order(
-                self.ticker, action="sell", side="yes",
-                count=count, price=ask_px,
-            )
-            if result:
-                self._sell_order = {
-                    "order_id": result.get("order_id", "dry"),
-                    "price":    ask_px,
-                    "count":    count,
-                }
-                actions.append(f"sell@{ask_px:.2f}x{count}")
+            if ok:
+                result = kalshi_client.create_order(
+                    self.ticker, action="sell", side="yes",
+                    count=count, price=ask_px,
+                )
+                if result:
+                    self._sell_order = {
+                        "order_id": result.get("order_id", "dry"),
+                        "price":    ask_px,
+                        "count":    count,
+                    }
+                    actions.append(f"sell@{ask_px:.2f}x{count}")
         else:
             actions.append(f"sell_unchanged@{ask_px:.2f}")
 

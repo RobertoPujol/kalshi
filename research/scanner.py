@@ -11,6 +11,7 @@ Results are cached in memory between scan() calls.
 import math
 import os
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 from core.adaptive_params import scanner_min_score, blacklisted_series
@@ -30,6 +31,21 @@ def _score_market(m: dict) -> float:
     sp = m.get("spread")
     if sp is not None and sp > risk.max_spread:
         return 0.0
+
+    # Time-to-close gate: reject markets expiring within MIN_HOURS_TO_CLOSE.
+    # Same-day event markets (MLB totals/spreads, intraday elections) have
+    # rapidly-changing fair values and leave unsellable inventory at expiry.
+    close_time_str = m.get("close_time")
+    if close_time_str:
+        try:
+            close_dt   = datetime.fromisoformat(
+                close_time_str.replace("Z", "+00:00"))
+            hours_left = (close_dt - datetime.now(timezone.utc)
+                          ).total_seconds() / 3600
+            if hours_left < risk.min_hours_to_close:
+                return 0.0
+        except Exception:
+            pass
 
     score = 0.0
 

@@ -6,7 +6,8 @@ Kalshi's REST + WebSocket API.
 Cycles:
   Every 30s   → trading cycle: MM reprice, directional signal check, mean reversion
   Every 30min → market scan (find/drop markets)
-  Daily 00:00 → portfolio snapshot
+  Every 1hr   → portfolio snapshot (also fires on startup)
+  Daily 00:00 → daily snapshot (for end-of-day records)
   Daily 01:00 → strategy discovery + ML model retrain
 
 Usage:
@@ -53,6 +54,10 @@ sentiment_fv = SentimentFairValueProvider(base_provider=fair_value_model)
 _market_makers:        dict[str, MarketMaker]         = {}
 _directional_traders:  dict[str, DirectionalTrader]   = {}
 _mr_traders:           dict[str, MeanReversionTrader] = {}
+
+# ── Circuit-breaker state ─────────────────────────────────────────────────────
+_start_balance:      float = 0.0
+_trading_halted:     bool  = False
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -145,14 +150,39 @@ def job_market_scan():
 
 def job_trading_cycle():
     """Run all active strategy instances for one cycle."""
+    global _trading_halted
     if not any([_market_makers, _directional_traders, _mr_traders]):
+        return
+    if _trading_halted:
+        logger.warning("── MM cycle skipped — circuit breaker tripped ──")
         return
     try:
         balance, positions = _get_context()
-        n = (len(_market_makers) + len(_directional_traders) + len(_mr_traders))
-        logger.info(f"── Trading cycle | {n} traders | "
-                    f"bal=${balance:.2f} | pos={len(positions)} ──")
 
+        # Circuit breaker: halt all trading if session loss exceeds limit.
+        tripped, cb_reason = risk.is_circuit_breaker_tripped(
+            balance, _start_balance)
+        if tripped:
+            _trading_halted = True
+            logger.critical(
+                f"CIRCUIT BREAKER TRIPPED: {cb_reason} — "
+                "cancelling all orders and halting trading")
+            for mm in list(_market_makers.values()):
+                mm.cancel_all()
+            for dt in list(_directional_traders.values()):
+                dt.cancel_all()
+            for mr in list(_mr_traders.values()):
+                mr.cancel_all()
+            _market_makers.clear()
+            _directional_traders.clear()
+            _mr_traders.clear()
+            return
+
+        n = (len(_market_makers) + len(_directional_traders) + len(_mr_traders))
+        delta = balance - _start_balance
+        logger.info(f"── Trading cycle | {n} traders | "
+                    f"bal=${balance:.2f} ({delta:+.2f} from start) | "
+                    f"pos={len(positions)} ──")
         for ticker, mm in _market_makers.items():
             summary = scanner.get(ticker) or {}
             result  = mm.update(balance, positions, summary)
@@ -175,8 +205,8 @@ def job_trading_cycle():
         logger.error(f"job_trading_cycle error: {e}")
 
 
-def job_daily_snapshot():
-    """Save the daily portfolio snapshot."""
+def job_snapshot():
+    """Save a portfolio snapshot. Runs hourly and at startup."""
     try:
         balance, positions = _get_context()
         with _db() as db:
@@ -185,10 +215,11 @@ def job_daily_snapshot():
             TradeRepo.save_snapshot(db, balance=balance,
                                     open_positions=len(positions),
                                     total_pnl=total_pnl)
-        logger.info(f"Snapshot saved | balance=${balance:.2f} "
-                    f"open={len(positions)} pnl=${total_pnl:.4f}")
+        delta = balance - _start_balance
+        logger.info(f"Snapshot | balance=${balance:.2f} ({delta:+.2f} from start) | "
+                    f"open={len(positions)} | pnl=${total_pnl:.4f}")
     except Exception as e:
-        logger.error(f"job_daily_snapshot error: {e}")
+        logger.error(f"job_snapshot error: {e}")
 
 
 def job_strategy_discovery():
@@ -212,10 +243,23 @@ def job_strategy_discovery():
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 
 def main():
+    global _start_balance, _trading_halted
     mode = "DRY RUN" if DRY_RUN else "LIVE"
+
+    # Record starting balance for circuit-breaker calculations.
+    _start_balance = kalshi_client.get_balance()
+    _trading_halted = False
+
     logger.info(f"KalshiTrader starting | mode={mode} | "
-                f"env={os.getenv('KALSHI_ENV', 'prod')}")
+                f"env={os.getenv('KALSHI_ENV', 'prod')} | "
+                f"start_balance=${_start_balance:.2f}")
     logger.info(f"Risk: {risk.snapshot()}")
+
+    if _start_balance < risk.min_order:
+        logger.critical(
+            f"Balance ${_start_balance:.2f} is below min order size "
+            f"{risk.min_order}. Refusing to start.")
+        sys.exit(1)
 
     if not DRY_RUN:
         open_orders = kalshi_client.get_open_orders()
@@ -239,8 +283,12 @@ def main():
     scheduler.add_job(job_trading_cycle, IntervalTrigger(seconds=30),
                       id="trading_cycle")
 
-    # Daily snapshot at midnight UTC
-    scheduler.add_job(job_daily_snapshot, CronTrigger(hour=0, minute=0),
+    # Hourly portfolio snapshot (also fires immediately on startup).
+    scheduler.add_job(job_snapshot, IntervalTrigger(hours=1),
+                      id="snapshot", next_run_time=datetime.utcnow())
+
+    # Daily snapshot at midnight UTC (for end-of-day archival).
+    scheduler.add_job(job_snapshot, CronTrigger(hour=0, minute=0),
                       id="daily_snapshot")
 
     # Push closed trades to dashboard every 5 minutes; also fire immediately
